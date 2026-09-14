@@ -17,7 +17,7 @@ def StatePolygon(state_name_list):
     :param state_name: input the state name in the list
     :return: polygon of the state
     """
-    us_shape_name = "/Volumes/Shield/HealthAnalysis/data/geo/US/cb_2018_us_state_20m.shp"
+    us_shape_name = "/Users/zongrunli/Desktop/ForecastEvaluation/data/geo/US/cb_2018_us_state_20m.shp"
     us_states = fiona.open(us_shape_name)
     state_geo = []
     for state_name in state_name_list:
@@ -48,7 +48,7 @@ def FIPS_list(state_name_list):
 
 def CountyPolygon(state_name_list):
     fips_list = FIPS_list(state_name_list)
-    county_shape_name = "/Volumes/Shield/HealthAnalysis/data/geo/County/cb_2018_us_county_20m.shp"
+    county_shape_name = "/Users/zongrunli/Desktop/ForecastEvaluation/data/geo/County/cb_2018_us_county_20m.shp"
     us_counties = fiona.open(county_shape_name)
     county_ids = []
     polygons = []

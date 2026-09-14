@@ -11,54 +11,24 @@ def remove_nan_values(prediction, observation):
     valid_o = observation[valid_idx]
     return valid_p, valid_o
 
-
+# Regressions
 def MB(prediction, observation):
     return np.sum(prediction - observation) / len(prediction)
-
-
-def ME(prediction, observation):
-    return np.sum(np.abs(prediction - observation)) / len(prediction)
 
 
 def RMSE(prediction, observation):
     return np.sqrt(np.sum((prediction - observation) ** 2) / len(prediction))
 
 
-def CRMSE(prediction, observation):
-    p_mean, o_mean = np.mean(prediction), np.mean(observation)
-    return np.sqrt((1 / len(prediction) * np.sum(((prediction - p_mean) - (observation - o_mean)) ** 2)))
+def FB(prediction, observation, dl=0.1):
+    p = np.maximum(np.asarray(prediction, float), dl)
+    o = np.maximum(np.asarray(observation, float), dl)
+    return (2 / len(p)) * np.sum((p - o) / (p + o)) * 100
 
-
-def NMB(prediction, observation):
-    return (np.sum(prediction - observation) / np.sum(observation)) * 100
-
-
-def NME(prediction, observation):
-    return ((np.sum(np.abs(prediction - observation))) / np.sum(observation)) * 100
-
-
-def MNB(prediction, observation):
-    return (1 / len(prediction)) * np.sum((prediction - observation) / observation) * 100
-
-
-def MNE(prediction, observation):
-    return (1 / len(prediction)) * np.sum(np.abs(prediction - observation) / observation) * 100
-
-
-def FB(prediction, observation):
-    return (2 / len(prediction)) * np.sum((prediction - observation) / (prediction + observation)) * 100
-
-
-def FE(prediction, observation):
-    return (2 / len(prediction)) * np.sum(np.abs(prediction - observation) / (prediction + observation)) * 100
-
-
-def IOA(prediction, observation):
-    numerator = np.sum((prediction - observation) ** 2)
-    prediction_shift = np.abs((prediction - np.mean(observation)))
-    observation_shift = np.abs((observation - np.mean(observation)))
-    denominator = np.sum((prediction_shift + observation_shift) ** 2)
-    return 1 - numerator / denominator
+def FE(prediction, observation, dl=0.1):
+    p = np.maximum(np.asarray(prediction, float), dl)
+    o = np.maximum(np.asarray(observation, float), dl)
+    return (2 / len(p)) * np.sum(np.abs(p - o) / (p + o)) * 100
 
 
 def pearson_r(prediction, observation):
@@ -66,29 +36,70 @@ def pearson_r(prediction, observation):
     return r[0]
 
 
-def pearson_r2(prediction, observation):
-    return pearson_r(prediction, observation) ** 2
-
-def NMSE(obs, pred):
-    """
-    Normalized Mean Square Error
-    NMSE = MSE / mean(|obs|^2)
-    Returns NMSE in linear scale (not dB)
-    """
-    mse = np.mean(np.abs(obs - pred)**2)
-    norm = np.mean(np.abs(obs)**2)
+def NMSE(prediction, observation):
+    mse = np.mean((observation - prediction) ** 2)
+    norm = np.mean(prediction) * np.mean(observation)
     return mse / norm
 
-def R2(prediction, observation):
-    return r2_score(prediction, observation)
+
+def COD(prediction, observation):
+    prediction = np.asarray(prediction, dtype=float)
+    observation = np.asarray(observation, dtype=float)
+
+    obs_mean = np.mean(observation)
+    ss_res = np.sum((observation - prediction) ** 2)   # residual sum of squares
+    ss_tot = np.sum((observation - obs_mean) ** 2)      # total sum of squares
+
+    return 1 - ss_res / ss_tot
+
+
+# Classifications
+def _confusion_counts(obs_cat, mod_cat, category):
+    """One-vs-rest TP, FP, FN for a single category."""
+    obs_cat, mod_cat = np.asarray(obs_cat), np.asarray(mod_cat)
+    obs_is, mod_is = (obs_cat == category), (mod_cat == category)
+    TP = int(np.sum(obs_is & mod_is))
+    FP = int(np.sum(~obs_is & mod_is))
+    FN = int(np.sum(obs_is & ~mod_is))
+    return TP, FP, FN
+
+
+def precision(obs_cat, mod_cat, category):
+    """Precision for one category: TP / (TP + FP)."""
+    TP, FP, _ = _confusion_counts(obs_cat, mod_cat, category)
+    return TP / (TP + FP) if (TP + FP) > 0 else np.nan
+
+
+def recall(obs_cat, mod_cat, category):
+    """Recall for one category: TP / (TP + FN)."""
+    TP, _, FN = _confusion_counts(obs_cat, mod_cat, category)
+    return TP / (TP + FN) if (TP + FN) > 0 else np.nan
+
+
+def f1(obs_cat, mod_cat, category):
+    """F1 for one category: 2TP / (2TP + FP + FN)."""
+    TP, FP, FN = _confusion_counts(obs_cat, mod_cat, category)
+    return 2 * TP / (2 * TP + FP + FN) if (2 * TP + FP + FN) > 0 else np.nan
+
+
+def false_alarm_ratio(obs_cat, mod_cat, category):
+    """False alarm ratio for one category: 1 - precision."""
+    p = precision(obs_cat, mod_cat, category)
+    return 1 - p if not np.isnan(p) else np.nan
+
+
+def classification_accuracy(obs_cat, mod_cat):
+    """Overall multiclass accuracy: fraction of samples in the correct category."""
+    obs_cat, mod_cat = np.asarray(obs_cat), np.asarray(mod_cat)
+    return float(np.mean(obs_cat == mod_cat)) if len(obs_cat) else np.nan
 
 
 def metrics_by_aqi_category(prediction, observation, metric_funcs=None):
     if metric_funcs is None:
         metric_funcs = {
-            "MB": MB, "ME": ME, "RMSE": RMSE,
-            "NMB": NMB, "NME": NME, "IOA": IOA,
+            "MB": MB, "RMSE": RMSE,
             "Pearson R": pearson_r, "R2": R2,
+            "FB": FB, "FE": FE, "NMSE": NMSE
         }
     prediction = np.asarray(prediction, dtype=float)
     observation = np.asarray(observation, dtype=float)
@@ -197,6 +208,14 @@ def grouped_metric(merged, MODEL_VAR, OBS_VAR, level, metric, lead_time=None):
     return out
 
 
+def grouped_site_count(merged, level):
+    """Number of unique monitoring sites in each state/county."""
+    df = merged.copy()
+    df["siteCode"]    = df["siteCode"].astype(str).str.zfill(9)
+    df["state_fips"]  = df["siteCode"].str[:2]
+    df["county_fips"] = df["siteCode"].str[:5]
+    key = "state_fips" if level == "state" else "county_fips"
+    return df.groupby(key)["siteCode"].nunique().to_dict()
 
 def time_bin(df, scale):
     _season = {12: "DJF", 1: "DJF", 2: "DJF", 3: "MAM", 4: "MAM", 5: "MAM",
@@ -219,6 +238,16 @@ def time_bin(df, scale):
 
 
 def overall_metrics_at_scale(df, scale, metrics, model_var, obs_var):
+    # TODO:
+    """
+    Week 1 — an active fire week: 5 smoke days, each with bias −4.
+    Week 2 — an isolated smoke day: 1 smoke day, bias −1.
+    Hourly (or daily) MB — every smoke day weighted equally:
+    MB = (5·(−4) + 1·(−1)) / 6 = −21/6 = −3.5
+    Weekly MB — each week collapsed to one bin, then averaged:
+    Week 1 bin = −4, Week 2 bin = −1 → MB = (−4 + −1)/2 = −2.5
+    """
+    #TODO:
     g = df.copy()
     if scale == "Hourly":
         avg = g
@@ -227,14 +256,61 @@ def overall_metrics_at_scale(df, scale, metrics, model_var, obs_var):
         avg = g.groupby(["siteCode", "_bin"])[[model_var, obs_var]].mean().reset_index()
     mod, obs = avg[model_var].values, avg[obs_var].values
     mask = np.isfinite(mod) & np.isfinite(obs)
-    return metrics(obs[mask], mod[mask])
+    return metrics(mod[mask], obs[mask])
 
 
 def spatial_group_metric(df, key, model_var, obs_var, lead_times, metric_fn):
-    """Spatial mean per (group, lead_time), then R2 across groups per lead time."""
-    ts = df.groupby([key, "lead_time"])[[model_var, obs_var]].mean().reset_index()
+    """Spatial mean per (group, Time, lead_time) — hourly resolution kept — then metric across all pairs."""
+    ts = df.groupby([key, "Time", "lead_time"])[[model_var, obs_var]].mean().reset_index()
     vals = []
     for lt in lead_times:
         sub = ts if lt is None else ts[ts["lead_time"] == lt]
-        vals.append(metric_fn(sub[model_var].to_numpy(float), sub[obs_var].to_numpy(float)))
+        mod, obs = sub[model_var].to_numpy(float), sub[obs_var].to_numpy(float)
+        m = np.isfinite(mod) & np.isfinite(obs)
+        vals.append(metric_fn(mod[m], obs[m]))
     return vals
+
+
+def aqi_category_agreement_tol(prediction, observation, tol=1.0):
+    """
+    Same as aqi_category_agreement, but a cross-category pair is forgiven
+    (counted as a hit on the observed category) when |pred - obs| <= tol.
+    This only forgives genuine boundary-huggers, e.g. pred=8.9 vs obs=9.1.
+    tol is in µg/m³ and should be justified by measurement uncertainty.
+    """
+    prediction = np.asarray(prediction, dtype=float)
+    observation = np.asarray(observation, dtype=float)
+    pred_clean, obs_clean = remove_nan_values(prediction, observation)
+
+    pred_cats = assign_aqi_category(pred_clean)
+    obs_cats = assign_aqi_category(obs_clean)
+
+    order_idx = {c: i for i, c in enumerate(AQI_ORDER)}
+    pred_idx = np.array([order_idx[c] for c in pred_cats])
+    obs_idx = np.array([order_idx[c] for c in obs_cats])
+
+    # forgive boundary crossings within tol: snap predicted -> observed
+    forgiven = (pred_idx != obs_idx) & (np.abs(pred_clean - obs_clean) <= tol)
+    eff_pred_idx = np.where(forgiven, obs_idx, pred_idx)
+
+    hit_rate = np.mean(eff_pred_idx == obs_idx)
+    over_rate = np.mean(eff_pred_idx > obs_idx)
+    under_rate = np.mean(eff_pred_idx < obs_idx)
+
+    n = len(AQI_ORDER)
+    matrix = np.zeros((n, n), dtype=int)
+    for oi, pi in zip(obs_idx, eff_pred_idx):
+        matrix[oi, pi] += 1
+
+    conf_df = pd.DataFrame(
+        matrix,
+        index=[f"Obs: {c}" for c in AQI_ORDER],
+        columns=[f"Pred: {c}" for c in AQI_ORDER],
+    )
+    return {
+        "hit_rate": hit_rate,
+        "over_rate": over_rate,
+        "under_rate": under_rate,
+        "n_forgiven": int(forgiven.sum()),
+        "confusion_matrix": conf_df,
+    }

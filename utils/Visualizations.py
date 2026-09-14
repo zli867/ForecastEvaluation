@@ -5,10 +5,13 @@ from scipy import stats
 import matplotlib.pyplot as plt
 from matplotlib import colors
 from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score
 from utils.utils import AQI_CATEGORIES, AQI_ORDER, assign_aqi_category, aqi_category_color
-from utils.metrics import metrics_by_aqi_category, aqi_category_agreement, remove_nan_values, MB, ME, RMSE, NMB, NME, IOA, pearson_r, R2
+from utils.metrics import metrics_by_aqi_category, aqi_category_agreement, remove_nan_values, pearson_r
 import matplotlib.patches as mpatches
 from matplotlib.patches import Patch
+from matplotlib.colors import LogNorm
+
 
 def discrete_cmap(invertals, base_color_scheme="Spectral_r", low_value_color='gray', high_value_color='purple'):
     cmap = plt.get_cmap(base_color_scheme, invertals)
@@ -633,11 +636,98 @@ def plotComparisonIntercept_fast(X, Y, bin_size, ax, fig, side=True):
     line_x = np.linspace(0, np.nanmax(X), 100).reshape(-1, 1)
     line_y = lin_model.predict(line_x)
 
-    r2 = lin_model.score(Xr, Y)
+    # r2 = lin_model.score(Xr, Y)
+    r = pearson_r(X, Y)
     slope = lin_model.coef_[0]
     intercept = lin_model.intercept_
 
-    reg_txt = f"y={slope:.2f}x+{intercept:.2f}, $R^2$={r2:.2f}"
+    reg_txt = f"y={slope:.2f}x+{intercept:.2f}, r={r:.2f}"
     ax.plot(line_x, line_y, 'r', lw=2)
 
     return reg_txt
+
+
+def plotComparisonHexbin(X, Y, bin_size, ax, fig, mincnt=10):
+    # Hexbin density plot
+    hb = ax.hexbin(
+        X, Y,
+        gridsize=bin_size,          # controls hex resolution
+        mincnt=mincnt,                   # hide empty hexes
+        linewidths=0.1,
+        norm=LogNorm(),
+    )
+    divider = make_axes_locatable(ax)
+    d_cax = divider.append_axes('right', size='5%', pad=0.05)
+    cb = fig.colorbar(hb, cax=d_cax)
+    cb.set_label('Counts', fontsize=16, rotation=270, labelpad=15)
+    # Linear regression (same as before)
+    X_r = X.reshape(-1, 1)
+    lin_model = LinearRegression().fit(X_r, Y)
+    line_x = np.linspace(0, np.max(X_r)).reshape(-1, 1)
+    line_y = lin_model.predict(line_x)
+
+    cf = get_conf_intercept(0.05, lin_model, X_r, Y)
+    r = pearson_r(X, Y)
+    reg_txt = r'y={:.2f}x+{:.1f}, r = {:.2f}'.format(
+        cf["coeffs"][1], cf["coeffs"][0], r
+    )
+
+    ax.plot(line_x, line_y, 'r', linewidth=3)  # dashed 1:1 line optional
+
+    return reg_txt
+
+def plot_aqi_confusion_matrix_log(confusion_df, ax=None,
+                              title="AQI Category Confusion Matrix\n(rows=Obs, cols=Pred)",
+                              cmap="viridis", vmin=1e-3, vmax=1.0):
+    """
+    Plot the AQI confusion matrix as a heatmap (row-normalised fractions),
+    viridis colormap on a logarithmic color scale.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6))
+    else:
+        fig = ax.get_figure()
+
+    matrix = confusion_df.values.astype(float)
+    row_sums = matrix.sum(axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1
+    norm_matrix = matrix / row_sums
+
+    # log color scale can't show 0 — mask empty cells and give them a bg color
+    masked = np.ma.masked_less_equal(norm_matrix, 0)
+    cmap_obj = plt.get_cmap(cmap).copy()
+    cmap_obj.set_bad("#f0f0f0")                       # empty cells
+    lognorm = LogNorm(vmin=vmin, vmax=vmax)
+
+    im = ax.imshow(masked, cmap=cmap_obj, norm=lognorm, aspect="auto")
+
+    n = len(AQI_ORDER)
+    short_labels = [c.replace("Unhealthy for Sensitive", "USG") for c in AQI_ORDER]
+    ax.set_xticks(range(n)); ax.set_yticks(range(n))
+    ax.set_xticklabels(short_labels, rotation=35, ha="right", fontsize=9)
+    ax.set_yticklabels(short_labels, fontsize=9)
+    ax.set_title(title, fontsize=12, fontweight="bold")
+
+    # annotate cells; pick text color from the cell's position in the log scale
+    for i in range(n):
+        for j in range(n):
+            count = int(matrix[i, j])
+            frac = norm_matrix[i, j]
+            t = lognorm(max(frac, vmin)) if frac > 0 else 0.0   # 0..1 within scale
+            text_color = "white" if t < 0.5 else "black"        # viridis: dark low, bright high
+            ax.text(j, i, f"{count}\n({frac * 100:.0f}%)",
+                    ha="center", va="center", fontsize=7.5,
+                    color=text_color, fontweight="bold" if i == j else "normal")
+
+    for k in range(n):
+        ax.add_patch(plt.Rectangle((k - 0.5, k - 0.5), 1, 1,
+                                   fill=False, edgecolor="r",
+                                   linewidth=2.5, zorder=3))
+
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="4%", pad=0.08)
+    cb = fig.colorbar(im, cax=cax)
+    cb.set_label("Row-normalised fraction (log)", fontsize=9)
+
+    fig.tight_layout()
+    return fig, ax
